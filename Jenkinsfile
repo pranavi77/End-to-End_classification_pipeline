@@ -44,11 +44,13 @@ pipeline {
     stage('Build & Push Docker') {
       steps {
         sh '''
+        bash -lc '
           source env.out
           DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build --provenance=false --output=type=docker -t $REPO:$TAG .
           docker tag $REPO:$TAG $ECR/$REPO:$TAG
           docker push $ECR/$REPO:$TAG
           echo IMAGE_URI=$ECR/$REPO:$TAG >> env.out
+        '
         '''
       }
     }
