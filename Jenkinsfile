@@ -3,11 +3,10 @@ pipeline {
   environment {
     AWS_REGION = 'us-east-1'
     REPO = 'clf-onnx-api'
-    TAG  = "smv${env.BUILD_NUMBER}"
   }
   options { timestamps() }
-  stages {
 
+  stages {
     stage('Checkout') {
       steps { checkout scm }
     }
@@ -24,7 +23,6 @@ pipeline {
       }
     }
 
-
     stage('AWS Login & ECR Prep') {
       environment {
         AWS_ACCESS_KEY_ID     = credentials('aws-access-key')
@@ -32,31 +30,30 @@ pipeline {
       }
       steps {
         sh '''
-        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-        ECR=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
-        aws ecr describe-repositories --repository-name $REPO --region $AWS_REGION || \
+          set -e
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+          aws ecr describe-repositories --repository-name $REPO --region $AWS_REGION || \
             aws ecr create-repository --repository-name $REPO --region $AWS_REGION
-        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR
         '''
       }
     }
 
     stage('Build & Push Docker') {
-        steps {
+      steps {
         withCredentials([
-            string(credentialsId: 'aws-access-key',  variable: 'AWS_ACCESS_KEY_ID'),
-            string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+          string(credentialsId: 'aws-access-key',  variable: 'AWS_ACCESS_KEY_ID'),
+          string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
         ]) {
-            sh '''
+          sh '''
             set -e
-            AWS_REGION=us-east-1
-            REPO=clf-onnx-api
             TAG=smv${BUILD_NUMBER}
             ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
             ECR=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 
             aws ecr describe-repositories --repository-name $REPO --region $AWS_REGION || \
-                aws ecr create-repository --repository-name $REPO --region $AWS_REGION
+              aws ecr create-repository --repository-name $REPO --region $AWS_REGION
             aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR
 
             docker build -t $REPO:$TAG .
@@ -67,17 +64,18 @@ pipeline {
             echo AWS_REGION=$AWS_REGION >> env.out
             echo ECR=$ECR >> env.out
             echo IMAGE_URI=$ECR/$REPO:$TAG >> env.out
-            '''
+          '''
         }
-        }
+      }
     }
+
     stage('Package & Upload Model') {
-        steps {
-            withCredentials([
-      string(credentialsId: 'aws-access-key',  variable: 'AWS_ACCESS_KEY_ID'),
-      string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
-    ]) {
-            sh '''
+      steps {
+        withCredentials([
+          string(credentialsId: 'aws-access-key',  variable: 'AWS_ACCESS_KEY_ID'),
+          string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          sh '''
             set -e
             . env.out
             BUCKET="clf-artifacts-$ACCOUNT_ID-$AWS_REGION"
@@ -86,40 +84,43 @@ pipeline {
             (cd model_art && tar -czf model.tar.gz model_int8_qdq.onnx)
             aws s3 cp model_art/model.tar.gz s3://$BUCKET/models/model.tar.gz --region $AWS_REGION
             echo MODEL_S3=s3://$BUCKET/models/model.tar.gz >> env.out
-            '''
+          '''
         }
-        }
+      }
     }
 
     stage('Deploy SageMaker') {
-    environment { SAGEMAKER_ROLE = credentials('sagemaker-exec-role-arn') }
-        steps {
-                withCredentials([
-      string(credentialsId: 'aws-access-key',  variable: 'AWS_ACCESS_KEY_ID'),
-      string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
-    ]) {
-            sh '''
+      environment { SAGEMAKER_ROLE = credentials('sagemaker-exec-role-arn') }
+      steps {
+        withCredentials([
+          string(credentialsId: 'aws-access-key',  variable: 'AWS_ACCESS_KEY_ID'),
+          string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+          sh '''
             set -e
+            . .venv/bin/activate
             . env.out
             python - <<'PY'
-        import os, sagemaker
-        from sagemaker.model import Model
-        img=os.environ['IMAGE_URI']
-        mdata=os.environ['MODEL_S3']
-        role=os.environ['SAGEMAKER_ROLE']
-        sess=sagemaker.Session()
-        m=Model(image_uri=img, role=role, model_data=mdata,
-                env={"MODEL_PATH":"/opt/ml/model/model_int8_qdq.onnx"},
-                sagemaker_session=sess)
-        m.deploy(endpoint_name="clf-onnx-endpoint1",
-                instance_type="ml.t2.medium",
-                initial_instance_count=1)
-        print("Deployed.")
-        PY
-            '''
+import os, sagemaker
+from sagemaker.model import Model
+img=os.environ['IMAGE_URI']
+mdata=os.environ['MODEL_S3']
+role=os.environ['SAGEMAKER_ROLE']
+sess=sagemaker.Session()
+m=Model(image_uri=img, role=role, model_data=mdata,
+        env={"MODEL_PATH":"/opt/ml/model/model_int8_qdq.onnx"},
+        sagemaker_session=sess)
+m.deploy(endpoint_name="clf-onnx-endpoint1",
+         instance_type="ml.t2.medium",
+         initial_instance_count=1)
+print("Deployed.")
+PY
+          '''
         }
-        }
+      }
     }
+  }
+
   post {
     always {
       archiveArtifacts artifacts: 'env.out, model_art/model.tar.gz', onlyIfSuccessful: false
