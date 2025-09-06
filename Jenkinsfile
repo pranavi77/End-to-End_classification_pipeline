@@ -42,31 +42,43 @@ pipeline {
     }
 
     stage('Build & Push Docker') {
-      steps {
-        sh '''
-        bash -lc '
-          source env.out
-          DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build --provenance=false --output=type=docker -t $REPO:$TAG .
-          docker tag $REPO:$TAG $ECR/$REPO:$TAG
-          docker push $ECR/$REPO:$TAG
-          echo IMAGE_URI=$ECR/$REPO:$TAG >> env.out
-        '
-        '''
-      }
-    }
+        steps {
+            sh '''
+            set -e
+            AWS_REGION=us-east-1
+            REPO=clf-onnx-api
+            TAG=smv${BUILD_NUMBER}
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            ECR=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 
+            aws ecr describe-repositories --repository-name $REPO --region $AWS_REGION || \
+                aws ecr create-repository --repository-name $REPO --region $AWS_REGION
+            aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR
+
+            docker build -t $REPO:$TAG .
+            docker tag $REPO:$TAG $ECR/$REPO:$TAG
+            docker push $ECR/$REPO:$TAG
+
+            echo ACCOUNT_ID=$ACCOUNT_ID > env.out
+            echo AWS_REGION=$AWS_REGION >> env.out
+            echo ECR=$ECR >> env.out
+            echo IMAGE_URI=$ECR/$REPO:$TAG >> env.out
+            '''
+        }
+    }
     stage('Package & Upload Model') {
-      steps {
-        sh '''
-          source env.out
-          BUCKET="clf-artifacts-$ACCOUNT_ID-$AWS_REGION"
-          aws s3 mb s3://$BUCKET --region $AWS_REGION || true
-          mkdir -p model_art && cp model_int8_qdq.onnx model_art/
-          (cd model_art && tar -czf model.tar.gz model_int8_qdq.onnx)
-          aws s3 cp model_art/model.tar.gz s3://$BUCKET/models/model.tar.gz --region $AWS_REGION
-          echo MODEL_S3=s3://$BUCKET/models/model.tar.gz >> env.out
-        '''
-      }
+        steps {
+            sh '''
+            set -e
+            . env.out
+            BUCKET="clf-artifacts-$ACCOUNT_ID-$AWS_REGION"
+            aws s3 mb s3://$BUCKET --region $AWS_REGION || true
+            mkdir -p model_art && cp model_int8_qdq.onnx model_art/
+            (cd model_art && tar -czf model.tar.gz model_int8_qdq.onnx)
+            aws s3 cp model_art/model.tar.gz s3://$BUCKET/models/model.tar.gz --region $AWS_REGION
+            echo MODEL_S3=s3://$BUCKET/models/model.tar.gz >> env.out
+            '''
+        }
     }
 
     stage('Deploy SageMaker') {
