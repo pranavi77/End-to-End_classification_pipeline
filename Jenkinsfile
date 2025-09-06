@@ -70,25 +70,35 @@ pipeline {
     }
 
     stage('Package & Upload Model') {
-      steps {
-        withCredentials([
-          string(credentialsId: 'aws-access-key',  variable: 'AWS_ACCESS_KEY_ID'),
-          string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
-        ]) {
-          sh '''
-            set -e
-            . env.out
-            BUCKET="clf-artifacts-$ACCOUNT_ID-$AWS_REGION"
-            aws s3 mb s3://$BUCKET --region $AWS_REGION || true
-            mkdir -p model_art && cp model_int8_qdq.onnx model_art/
-            (cd model_art && tar -czf model.tar.gz model_int8_qdq.onnx)
-            aws s3 cp model_art/model.tar.gz s3://$BUCKET/models/model.tar.gz --region $AWS_REGION
-            echo MODEL_S3=s3://$BUCKET/models/model.tar.gz >> env.out
-          '''
-        }
-      }
-    }
+        steps {
+            withCredentials([
+            string(credentialsId: 'aws-access-key',  variable: 'AWS_ACCESS_KEY_ID'),
+            string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+            ]) {
+            sh '''
+                set -e
+                AWS_REGION=us-east-1
+                ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+                BUCKET="clf-artifacts-$ACCOUNT_ID-$AWS_REGION"
 
+                aws s3 mb s3://$BUCKET --region $AWS_REGION || true
+                mkdir -p model_art
+                # get ONNX (either present locally or pull a cached copy)
+                if [ ! -f model_int8_qdq.onnx ]; then
+                aws s3 cp s3://$BUCKET/models/model_int8_qdq.onnx model_int8_qdq.onnx || true
+                fi
+                cp model_int8_qdq.onnx model_art/
+                (cd model_art && tar -czf model.tar.gz model_int8_qdq.onnx)
+                aws s3 cp model_art/model.tar.gz s3://$BUCKET/models/model.tar.gz --region $AWS_REGION
+
+                # write env.out for later stage (optional)
+                echo ACCOUNT_ID=$ACCOUNT_ID > env.out
+                echo AWS_REGION=$AWS_REGION >> env.out
+                echo MODEL_S3=s3://$BUCKET/models/model.tar.gz >> env.out
+            '''
+            }
+        }
+    }
     stage('Deploy SageMaker') {
       environment { SAGEMAKER_ROLE = credentials('sagemaker-exec-role-arn') }
       steps {
@@ -96,26 +106,30 @@ pipeline {
           string(credentialsId: 'aws-access-key',  variable: 'AWS_ACCESS_KEY_ID'),
           string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
         ]) {
-          sh '''
-            set -e
-            . .venv/bin/activate
-            . env.out
-            python - <<'PY'
+sh '''
+  set -e
+  [ -f env.out ] && . env.out || true
+  AWS_REGION=${AWS_REGION:-us-east-1}
+  ACCOUNT_ID=${ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}
+  IMAGE_URI=${IMAGE_URI:-$(aws ecr describe-images --repository-name clf-onnx-api --region $AWS_REGION --query 'imageDetails[-1].imageUri' --output text)}
+  MODEL_S3=${MODEL_S3:-s3://clf-artifacts-$ACCOUNT_ID-$AWS_REGION/models/model.tar.gz}
+
+  . .venv/bin/activate
+  python - <<'PY'
 import os, sagemaker
 from sagemaker.model import Model
 img=os.environ['IMAGE_URI']
 mdata=os.environ['MODEL_S3']
 role=os.environ['SAGEMAKER_ROLE']
 sess=sagemaker.Session()
-m=Model(image_uri=img, role=role, model_data=mdata,
-        env={"MODEL_PATH":"/opt/ml/model/model_int8_qdq.onnx"},
-        sagemaker_session=sess)
-m.deploy(endpoint_name="clf-onnx-endpoint1",
-         instance_type="ml.t2.medium",
-         initial_instance_count=1)
+Model(image_uri=img, role=role, model_data=mdata,
+      env={"MODEL_PATH":"/opt/ml/model/model_int8_qdq.onnx"},
+      sagemaker_session=sess).deploy(
+  endpoint_name="clf-onnx-endpoint1",
+  instance_type="ml.t2.medium", initial_instance_count=1)
 print("Deployed.")
 PY
-          '''
+'''
         }
       }
     }
