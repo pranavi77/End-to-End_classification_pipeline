@@ -111,11 +111,9 @@ stage('Deploy SageMaker') {
         AWS_REGION=us-east-1
         ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
         REPO=clf-onnx-api
-        # get latest image URI (last pushed)
-        IMAGE_URI=$(aws ecr describe-images --repository-name $REPO --region $AWS_REGION \
+        export IMAGE_URI=$(aws ecr describe-images --repository-name $REPO --region $AWS_REGION \
           --query "reverse(sort_by(imageDetails,& imagePushedAt))[0].imageUri" --output text)
-        MODEL_S3=s3://clf-artifacts-$ACCOUNT_ID-$AWS_REGION/models/model.tar.gz
-
+        export MODEL_S3=s3://clf-artifacts-$ACCOUNT_ID-$AWS_REGION/models/model.tar.gz
         . .venv/bin/activate
         python - <<'PY'
 import os, sagemaker
@@ -136,6 +134,7 @@ PY
     }
   }
 }
+
   }
 
   post {
