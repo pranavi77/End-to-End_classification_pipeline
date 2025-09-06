@@ -58,7 +58,10 @@ pipeline {
 
             docker build -t $REPO:$TAG .
             docker tag $REPO:$TAG $ECR/$REPO:$TAG
+            docker tag $REPO:$TAG $ECR/$REPO:latest
             docker push $ECR/$REPO:$TAG
+            docker push $ECR/$REPO:latest
+
 
             echo ACCOUNT_ID=$ACCOUNT_ID > env.out
             echo AWS_REGION=$AWS_REGION >> env.out
@@ -112,8 +115,8 @@ stage('Deploy SageMaker') {
         export AWS_DEFAULT_REGION=$AWS_REGION
         ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
         REPO=clf-onnx-api
-        export IMAGE_URI=$(aws ecr describe-images --repository-name $REPO --region $AWS_REGION \
-          --query "reverse(sort_by(imageDetails,& imagePushedAt))[0].imageUri" --output text)
+
+        export IMAGE_URI="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO:latest"
         export MODEL_S3=s3://clf-artifacts-$ACCOUNT_ID-$AWS_REGION/models/model.tar.gz
 
         . .venv/bin/activate
