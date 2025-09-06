@@ -99,23 +99,25 @@ pipeline {
             }
         }
     }
-    stage('Deploy SageMaker') {
-      environment { SAGEMAKER_ROLE = credentials('sagemaker-exec-role-arn') }
-      steps {
-        withCredentials([
-          string(credentialsId: 'aws-access-key',  variable: 'AWS_ACCESS_KEY_ID'),
-          string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
-        ]) {
-sh '''
-  set -e
-  [ -f env.out ] && . env.out || true
-  AWS_REGION=${AWS_REGION:-us-east-1}
-  ACCOUNT_ID=${ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}
-  IMAGE_URI=${IMAGE_URI:-$(aws ecr describe-images --repository-name clf-onnx-api --region $AWS_REGION --query 'imageDetails[-1].imageUri' --output text)}
-  MODEL_S3=${MODEL_S3:-s3://clf-artifacts-$ACCOUNT_ID-$AWS_REGION/models/model.tar.gz}
+stage('Deploy SageMaker') {
+  environment { SAGEMAKER_ROLE = credentials('sagemaker-exec-role-arn') }
+  steps {
+    withCredentials([
+      string(credentialsId: 'aws-access-key',  variable: 'AWS_ACCESS_KEY_ID'),
+      string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+    ]) {
+      sh '''
+        set -e
+        AWS_REGION=us-east-1
+        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        REPO=clf-onnx-api
+        # get latest image URI (last pushed)
+        IMAGE_URI=$(aws ecr describe-images --repository-name $REPO --region $AWS_REGION \
+          --query "reverse(sort_by(imageDetails,& imagePushedAt))[0].imageUri" --output text)
+        MODEL_S3=s3://clf-artifacts-$ACCOUNT_ID-$AWS_REGION/models/model.tar.gz
 
-  . .venv/bin/activate
-  python - <<'PY'
+        . .venv/bin/activate
+        python - <<'PY'
 import os, sagemaker
 from sagemaker.model import Model
 img=os.environ['IMAGE_URI']
@@ -125,14 +127,15 @@ sess=sagemaker.Session()
 Model(image_uri=img, role=role, model_data=mdata,
       env={"MODEL_PATH":"/opt/ml/model/model_int8_qdq.onnx"},
       sagemaker_session=sess).deploy(
-  endpoint_name="clf-onnx-endpoint1",
-  instance_type="ml.t2.medium", initial_instance_count=1)
+    endpoint_name="clf-onnx-endpoint1",
+    instance_type="ml.t2.medium",
+    initial_instance_count=1)
 print("Deployed.")
 PY
-'''
-        }
-      }
+      '''
     }
+  }
+}
   }
 
   post {
