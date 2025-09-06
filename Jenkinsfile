@@ -108,23 +108,27 @@ stage('Deploy SageMaker') {
     ]) {
       sh '''
         set -e
-        AWS_REGION=us-east-1
+        export AWS_REGION=us-east-1
+        export AWS_DEFAULT_REGION=$AWS_REGION
         ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
         REPO=clf-onnx-api
         export IMAGE_URI=$(aws ecr describe-images --repository-name $REPO --region $AWS_REGION \
           --query "reverse(sort_by(imageDetails,& imagePushedAt))[0].imageUri" --output text)
         export MODEL_S3=s3://clf-artifacts-$ACCOUNT_ID-$AWS_REGION/models/model.tar.gz
+
         . .venv/bin/activate
         python - <<'PY'
-import os, sagemaker
+import os, boto3, sagemaker
 from sagemaker.model import Model
-img=os.environ['IMAGE_URI']
-mdata=os.environ['MODEL_S3']
-role=os.environ['SAGEMAKER_ROLE']
-sess=sagemaker.Session()
+region = os.environ["AWS_REGION"]
+boto_sess = boto3.Session(region_name=region)
+sm_sess = sagemaker.Session(boto_session=boto_sess)
+img = os.environ["IMAGE_URI"]
+mdata = os.environ["MODEL_S3"]
+role = os.environ["SAGEMAKER_ROLE"]
 Model(image_uri=img, role=role, model_data=mdata,
       env={"MODEL_PATH":"/opt/ml/model/model_int8_qdq.onnx"},
-      sagemaker_session=sess).deploy(
+      sagemaker_session=sm_sess).deploy(
     endpoint_name="clf-onnx-endpoint1",
     instance_type="ml.t2.medium",
     initial_instance_count=1)
@@ -134,7 +138,6 @@ PY
     }
   }
 }
-
   }
 
   post {
