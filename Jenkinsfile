@@ -32,13 +32,11 @@ pipeline {
       }
       steps {
         sh '''
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          ECR=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
-          aws ecr describe-repositories --repository-name $REPO --region $AWS_REGION || \
+        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        ECR=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+        aws ecr describe-repositories --repository-name $REPO --region $AWS_REGION || \
             aws ecr create-repository --repository-name $REPO --region $AWS_REGION
-          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR
-          echo ACCOUNT_ID=$ACCOUNT_ID > env.out
-          echo ECR=$ECR >> env.out
+        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR
         '''
       }
     }
