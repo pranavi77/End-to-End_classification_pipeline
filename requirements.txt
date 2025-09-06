@@ -1,0 +1,8 @@
+torch
+torchvision
+sagemaker
+boto3
+scikit-learn
+hydra-core
+mlflow
+onnx

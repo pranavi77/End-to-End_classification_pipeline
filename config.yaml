@@ -1,0 +1,7 @@
+# config.yaml
+epochs: 2
+lr: 0.001
+batch_size: 32
+num_classes: 2
+model_dir: ./model
+data_dir: /Users/pranavinambi/Documents/Projects/end-to-end pipeline/data
