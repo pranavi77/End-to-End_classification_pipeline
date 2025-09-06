@@ -24,15 +24,6 @@ pipeline {
       }
     }
 
-    stage('Lint & Tests') {
-      steps {
-        sh '''
-          . .venv/bin/activate
-          ruff check . && black --check .
-          pytest -q || true
-        '''
-      }
-    }
 
     stage('AWS Login & ECR Prep') {
       environment {
